@@ -6,7 +6,8 @@ process = cms.Process("TEST",eras.Run2_2016)
 
 process.load("Configuration/StandardSequences/GeometryDB_cff")
 process.load("Configuration/StandardSequences/MagneticField_cff")
-process.load('Configuration.StandardSequences.FrontierConditions_GlobalTag_condDBv2_cff')
+#process.load('Configuration.StandardSequences.FrontierConditions_GlobalTag_condDBv2_cff')
+process.load('Configuration.StandardSequences.FrontierConditions_GlobalTag_cff')
 process.load("Configuration/StandardSequences/RawToDigi_Data_cff")
 process.load("Configuration.StandardSequences.Reconstruction_cff")
 
@@ -85,10 +86,13 @@ process.cscValidation = cms.EDAnalyzer("CSCValidation",
 process.load("L1Trigger.CSCTriggerPrimitives.cscTriggerPrimitiveDigis_cfi")
 process.cscTriggerPrimitiveDigis.CSCComparatorDigiProducer = "muonCSCDigis:MuonCSCComparatorDigi"
 process.cscTriggerPrimitiveDigis.CSCWireDigiProducer = "muonCSCDigis:MuonCSCWireDigi"
-process.cscTriggerPrimitiveDigis.tmbParam.mpcBlockMe1a = 0
+#process.cscTriggerPrimitiveDigis.tmbParam.mpcBlockMe1a = 0
+process.cscTriggerPrimitiveDigis.tmbPhase1.mpcBlockMe1a = 0
 process.load("L1TriggerConfig.L1CSCTPConfigProducers.L1CSCTriggerPrimitivesConfig_cff")
-process.l1csctpconf.alctParamMTCC2.alctNplanesHitPretrig = 3
-process.l1csctpconf.alctParamMTCC2.alctNplanesHitAccelPretrig = 3
+#process.l1csctpconf.alctParamMTCC2.alctNplanesHitPretrig = 3
+process.l1csctpconf.alctParam.alctNplanesHitPretrig = 3
+#process.l1csctpconf.alctParamMTCC2.alctNplanesHitAccelPretrig = 3
+process.l1csctpconf.alctParam.alctNplanesHitAccelPretrig = 3
 process.l1csctpconf.clctParam.clctNplanesHitPretrig = 3
 process.l1csctpconf.clctParam.clctHitPersist = 4
 
