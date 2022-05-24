@@ -39,6 +39,7 @@ RESULT_PATH = '/afs/cern.ch/cms/CAF/CMSCOMM/COMM_CSC/CSCVAL/results/results'
 WWW_PATH = '/afs/cern.ch/cms/CAF/CMSCOMM/COMM_CSC/CSCVAL/results'
 CRAB_PATH = '/eos/cms/store/group/dpg_csc/comm_csc/cscval/crab_output'
 BATCH_PATH = '/eos/cms/store/group/dpg_csc/comm_csc/cscval/batch_output'
+CONDOR_PATH = '/eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output' #GM
 
 ####################################
 
@@ -86,6 +87,7 @@ def run_validation(dataset,globalTag,run,maxJobNum,stream,eventContent,num,input
     triggers = kwargs.pop('triggers',[])
     dryRun = kwargs.pop('dryRun',False)
     runCrab = False
+    runCondor = True #GM
 
     # Create working directory for specific run number
     rundir = 'run_%s' % run
@@ -146,7 +148,7 @@ def run_validation(dataset,globalTag,run,maxJobNum,stream,eventContent,num,input
     outFilePrefix='valHists_run%s_%s' % (run, stream)
     outFileName='%s.root' % (outFilePrefix)
     outEMTFName='emtfHist_run%s_%s.root' % (run, stream)
-    outputPath = '%s/%s/run%s_%s' % (BATCH_PATH, stream, run, eventContent)
+    outputPath = '%s/%s/run%s_%s' % (CONDOR_PATH, stream, run, eventContent) #GM
     Time=time.strftime("%Y/%m/%d %H:%M:%S", time.localtime())
 
     symbol_map_html = { 'RUNNUMBER':run, 'NEVENT':num, "DATASET":dataset, "CMSSWVERSION":Release, "GLOBALTAG":globalTag, "DATE":Time }
@@ -222,6 +224,102 @@ def run_validation(dataset,globalTag,run,maxJobNum,stream,eventContent,num,input
         # submit to crab
         print "Submitting to crab"
         subprocess.check_call("bash run.sh", shell=True)
+
+    elif runCondor: #GM
+        #If runCondor is true, then create submission files and submit jobs through Condor
+        subprocess.check_call('mkdir -p /eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output/%s/run%s_%s' % (stream, run, eventContent), shell=True)
+        nf = 1
+        # maxJobNum controls the maximum number of jobs to submit if numJobs is very large
+        #maxJobNum = 2
+        print "\nMaximum number of condor jobs submitted per run: "+str(maxJobNum)+"\n"
+        # numJobs is the parameter to decide how many batch jobs to submit for the total number of input files for a run
+        numJobs = int(math.ceil(len(input_files)/float(nf)))
+        # check files already run over
+        fname = 'processedFiles.txt'
+        open(fname, 'a').close()
+        with open(fname, 'r') as file:
+            procFiles = file.readlines()
+        procFiles = [x.rstrip() for x in procFiles]
+
+        for j in range(min(maxJobNum, numJobs)):
+            doJob = force
+            for f in input_files[j*nf:j*nf+nf]:
+                if f not in procFiles:
+                    doJob = True
+                    if not dryRun:
+                        with open(fname, 'a') as file:
+                            file.write('%s\n'%f)
+
+            if not doJob: continue
+
+            # rename the file to unique
+            fn = input_files[j*nf].split('/')[-1].split('.')[0]
+            cfgFileName='validation_%s_%s_cfg.py' % (run, fn)
+            outFileName='valHists_run%s_%s_%s.root' % (run, stream, fn)
+            inEMTFName='DQM_V0001_YourSubsystem_R000%s.root' % run
+            outEMTFName='emtfHist_run%s_%s_%s.root' % (run, stream, fn)
+
+            # create the config file
+            fileListString = ''
+            numLumis = 0
+            numEvents = 0
+            for f in input_files[j*nf:j*nf+nf]:
+                if fileListString: fileListString += ',\n'
+                fileListString += "    '%s'" % f
+
+            symbol_map_cfg = { 'NEVENT':num, 'GLOBALTAG':globalTag, "OUTFILE":outFileName, 'DATASET':dataset, 'RUNNUMBER':run, 'FILELIST': fileListString, 'VERSION': str(j)}
+            replace(symbol_map_cfg,templatecfgFilePath, cfgFileName, trigger_cfg)
+
+            # create a submission script
+            sh = open("run_%i.sh" % j, "w")
+            sh.write("#!/bin/bash \n")
+            sh.write("aklog \n")
+            sh.write('source /afs/cern.ch/cms/cmsset_default.sh \n')
+            rundir = subprocess.Popen("pwd", shell=True,stdout=pipe).communicate()[0]
+            rundir = rundir.rstrip("\n")
+            sh.write("cd "+rundir+" \n")
+            sh.write("eval `scramv1 runtime -sh` \n")
+            sh.write("cd - \n")
+            sh.write("export XRD_NETWORKSTACK=IPv4 \n")
+            sh.write('cmsRun %s/%s\n' % (rundir, cfgFileName))
+            sh.write('cp %s /eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output/%s/run%s_%s/%s\n' % (outFileName, stream, run, eventContent, outFileName))
+            for trigger in triggers:
+                sh.write('cp %s_%s /eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output/%s/run%s_%s/%s_%s\n' % (trigger, outFileName, stream, run, eventContent, trigger, outFileName))
+            sh.write('cp %s /eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output/%s/run%s_%s/%s\n' % (inEMTFName, stream, run, eventContent, outEMTFName))
+            sh.write('cp TPEHists_%i.root /eos/cms/store/group/dpg_csc/comm_csc/cscval/condor_output/%s/run%s_%s/TPEHists_%i.root\n' % (j, stream, run, eventContent, j))
+            # sh.write('chmod g+w /eos/cms/store/group/dpg_csc/comm_csc/cscval/batch_output/%s/run%s_%s/\n' % (stream, run, eventContent))
+            sh.close()
+
+            print "Submitting job %i out of %i total files" % (j+1, numJobs)
+
+            #Names of file to execute, store output, errors, and job log
+            tjobname     = 'run_' + str(j) + '.sh'
+            tjobname_out = 'run_' + str(j) + '.out'
+            tjobname_err = 'run_' + str(j) + '.err'
+            tjobname_log = 'run_' + str(j) + '.log'
+            #Name of condor job
+            cdjobname = 'job_' + str(j) + '.sub'
+
+            #Set condor options for sub file
+            cjob_to_write =  'executable  = ' + tjobname           + '\n'
+            cjob_to_write += 'arguments   = $(ClusterId)$(ProcId)' + '\n'
+            cjob_to_write += 'output      = ' + tjobname_out       + '\n'
+            cjob_to_write += 'error       = ' + tjobname_err       + '\n'
+            cjob_to_write += 'log         = ' + tjobname_log       + '\n'
+            cjob_to_write += '+JobFlavour = "tomorrow"'            + '\n'
+            cjob_to_write += 'queue \n'
+            os.system('chmod 755 '+tjobname)
+
+            #Write condor options to sub file
+            cjob = open(cdjobname,'w')
+            cjob.write(cjob_to_write)
+            cjob.close()
+
+            #Submit condor job (sub file)
+            condor_sub = 'condor_submit ' + cdjobname
+            print condor_sub + '\n'
+            os.system(condor_sub)
+            os.system('sleep 1')
 
     else:
         #If runCrab is false, then need to create output directory on EOS,
@@ -324,7 +422,7 @@ def process_output(dataset,globalTag,**kwargs):
 
     if force: print 'Forcing remerging'
     # get available runs in eos
-    for job in subprocess.Popen('ls %s/%s' % (CRAB_PATH if runCrab else BATCH_PATH,stream), shell=True,stdout=pipe).communicate()[0].splitlines():
+    for job in subprocess.Popen('ls %s/%s' % (CRAB_PATH if runCrab else CONDOR_PATH if runCondor else BATCH_PATH,stream), shell=True,stdout=pipe).communicate()[0].splitlines():
         # go to working area
         if runCrab:
             [type, runStr, runEventContent] = job.split('_')
@@ -363,6 +461,9 @@ def process_output(dataset,globalTag,**kwargs):
             for jv in subprocess.Popen('eos ls %s/%s/%s' % (CRAB_PATH,stream,job), shell=True,stdout=pipe).communicate()[0].splitlines():
                 jobVersion = jv
             fileDir = '%s/%s/%s/%s/0000' % (CRAB_PATH,stream,job,jobVersion)
+        elif runCondor:
+            jobVersion = 'job'
+            fileDir = '%s/%s/%s' % (CONDOR_PATH,stream,job)
         else:
             jobVersion = 'job'
             fileDir = '%s/%s/%s' % (BATCH_PATH,stream,job)
